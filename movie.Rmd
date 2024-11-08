@@ -1,0 +1,134 @@
+---
+title: "615 movie"
+author: "HongnaSu"
+date: "2024-11-06"
+output:
+  pdf_document:
+   latex_engine: xelatex
+---
+
+
+```{r}
+library("tidyverse")
+library("topicmodels")
+library("tidytext")
+library("lexicon")
+library("factoextra")
+library("wordcloud")   
+library("ldatuning")       
+library("ggplot2") 
+library("rmarkdown")
+```
+
+
+```{r}
+movie<-read.csv("movie_plots_with_genres.csv")
+movie
+```
+
+
+
+```{r pressure, echo=FALSE}
+movies <- read.csv("movie_plots.csv")
+plots_by_words <- movies %>% unnest_tokens(word, Plot) %>%
+  anti_join(stop_words) %>%
+  count(Movie.Name, word, sort = TRUE)
+
+data("freq_first_names")
+first_names <- tolower(freq_first_names$Name)
+plot_word_counts <- plots_by_words %>%
+  filter(!(word %in% first_names))
+
+```
+```{r}
+library(ldatuning)
+library(tidyverse)
+dtm <- plot_word_counts %>%
+  cast_dtm(Movie.Name, word, n)
+topic_range <- seq(2, 50, by = 5)
+metrics <- c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014")
+control_params <- list(seed = 1234)
+result <- FindTopicsNumber(
+  dtm = dtm,
+  topics = topic_range,
+  metrics = metrics,
+  method = "Gibbs",
+  control = control_params,
+  mc.cores = 2,
+  verbose = TRUE
+)
+FindTopicsNumber_plot(result)
+
+```
+
+```{r}
+library(tidyverse)
+library(topicmodels)
+optimal_k <- 30
+lda_model <- LDA(dtm, k = optimal_k, control = list(seed = 1234))
+
+gamma_matrix <- posterior(lda_model)$topics
+beta_matrix <- posterior(lda_model)$terms
+if (is.null(gamma_matrix) || is.null(beta_matrix)) {
+  stop("LDA model did not return valid topic or term matrices.")
+}
+
+plots_gamma <- as.data.frame(gamma_matrix) %>%
+  mutate(document = rownames(gamma_matrix))
+
+plots_beta <- as.data.frame(beta_matrix) %>%
+  mutate(term = rownames(beta_matrix))
+
+plots_gamma_tidy <- plots_gamma %>%
+  pivot_longer(cols = -document, names_to = "topic", values_to = "gamma")
+
+plots_beta_tidy <- plots_beta %>%
+  pivot_longer(cols = -term, names_to = "topic", values_to = "beta")
+head(plots_gamma_tidy)
+head(plots_beta_tidy)
+
+```
+
+```{r}
+plots_gamma_tidy%>%
+  ggplot(aes(topic, gamma, fill = factor(document))) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(title = "Document-Topic Gamma Distribution", x = "Topic", y = "Gamma (Probability)")
+
+
+```
+
+```{r}
+library(tidytext)
+
+top_terms <- plots_beta_tidy %>%
+  group_by(topic) %>% 
+  slice_max(beta, n = 10) %>%  
+  ungroup() %>% 
+  arrange(topic, -beta)
+top_terms %>%
+  ggplot(aes(beta, reorder_within(term, beta, topic), fill = factor(topic))) 
+```
+
+```{r}
+plots_gamma_wider <- plots_gamma_tidy %>% pivot_wider(
+  names_from = topic,
+  values_from = gamma
+) %>%
+  drop_na()
+
+set.seed(123)
+cluster <- kmeans(plots_gamma_wider %>% select(-document), centers = 8)
+fviz_cluster(cluster, data = plots_gamma_wider %>% select(-document), geom = "point") +
+  labs(title = "K-means Clustering of Movies by Topic Gammas")
+
+```
+
+
+#Interpret
+Scree Plot: Helps identify the optimal number of topics by displaying coherence scores for different topic counts.
+Gamma Plot: Illustrates how strongly each movie is associated with each topic.
+Beta Plot: Highlights the most representative words for each topic based on their beta values.
+Cluster Plot: Visualizes groups of movies with similar themes based on their topic distributions.
+Word Cloud: Offers a visual representation of the most significant words across topics, with word size indicating importance.
+
